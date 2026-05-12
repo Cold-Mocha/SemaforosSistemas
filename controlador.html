@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Controlador de Intersección</title>
+<style>
+  :root {
+    --bg:  #1a1b2e;
+    --bg2: #23243a;
+    --fg:  #dde0f0;
+    --green: #7ec87e;
+    --red:   #d06868;
+    --blue:  #6a9fd8;
+    --gray:  #4a5060;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    display: flex;
+    gap: 16px;
+    padding: 16px;
+    min-height: 100vh;
+  }
+
+  #controls {
+    width: 240px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  #controls h2 {
+    color: var(--blue);
+    font-size: 11px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--gray);
+  }
+
+  .field {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .field label { color: var(--fg); white-space: nowrap; }
+
+  .field input[type="number"] {
+    width: 72px;
+    background: var(--bg2);
+    border: 1px solid var(--gray);
+    border-radius: 4px;
+    color: #c9a84c;
+    font-family: 'Courier New', monospace;
+    font-size: 15px;
+    font-weight: bold;
+    padding: 5px 8px;
+    text-align: center;
+    transition: border-color 0.15s;
+  }
+  .field input[type="number"]:focus { outline: none; border-color: var(--blue); }
+
+  .sep { height: 1px; background: var(--gray); }
+
+  .fase-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .fase-row span { color: var(--fg); }
+  .radio-opt { display: flex; align-items: center; gap: 5px; cursor: pointer; }
+  .radio-opt input { accent-color: var(--blue); cursor: pointer; }
+
+  #viz { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+
+  canvas { border: 1px solid var(--gray); border-radius: 6px; display: block; }
+
+  #decision { display: flex; align-items: baseline; gap: 12px; padding: 4px 2px; }
+  #dec-accion { font-size: 20px; font-weight: bold; min-width: 120px; }
+  #dec-razon  { font-size: 11px; color: var(--gray); line-height: 1.5; }
+</style>
+</head>
+<body>
+
+<div id="controls">
+  <h2>Escenario</h2>
+  <div class="field"><label>Autos Norte</label>
+    <input type="number" id="autos_norte" min="0" max="12" value="0"></div>
+  <div class="field"><label>Autos Este</label>
+    <input type="number" id="autos_este"  min="0" max="12" value="0"></div>
+  <div class="sep"></div>
+  <div class="field"><label>Peatones top</label>
+    <input type="number" id="ped_top"    min="0" max="10" value="0"></div>
+  <div class="field"><label>Peatones bottom</label>
+    <input type="number" id="ped_bottom" min="0" max="10" value="0"></div>
+  <div class="field"><label>Peatones left</label>
+    <input type="number" id="ped_left"   min="0" max="10" value="0"></div>
+  <div class="field"><label>Peatones right</label>
+    <input type="number" id="ped_right"  min="0" max="10" value="0"></div>
+  <div class="sep"></div>
+  <div class="field"><label>Ticks en verde</label>
+    <input type="number" id="ticks" min="0" max="20" value="0"></div>
+  <div class="sep"></div>
+  <div class="fase-row">
+    <span>Fase verde</span>
+    <label class="radio-opt">
+      <input type="radio" name="fase" value="vertical" checked> Vertical
+    </label>
+    <label class="radio-opt">
+      <input type="radio" name="fase" value="horizontal"> Horizontal
+    </label>
+  </div>
+</div>
+
+<div id="viz">
+  <canvas id="cv" width="420" height="420"></canvas>
+  <div id="decision">
+    <span id="dec-accion">---</span>
+    <span id="dec-razon"></span>
+  </div>
+</div>
+
+<script>
+// ── Controlador ──────────────────────────────────────────────────────
+const CTRL = { pesoAuto: 1.0, pesoPeaton: 0.8, minVerde: 3, maxVerde: 12, umbral: 1.5 };
+
+function presiones(estado) {
+  const p = estado.peatones;
+  return estado.fase === 'vertical'
+    ? { actual:  CTRL.pesoAuto * estado.autosNorte + CTRL.pesoPeaton * (p.left + p.right),
+        alterna: CTRL.pesoAuto * estado.autosEste  + CTRL.pesoPeaton * (p.top  + p.bottom) }
+    : { actual:  CTRL.pesoAuto * estado.autosEste  + CTRL.pesoPeaton * (p.top  + p.bottom),
+        alterna: CTRL.pesoAuto * estado.autosNorte + CTRL.pesoPeaton * (p.left + p.right) };
+}
+
+function decidir(estado) {
+  const { actual, alterna } = presiones(estado);
+  const t = estado.ticks, u = actual * CTRL.umbral;
+  if (t < CTRL.minVerde)  return { accion: 'mantener', razon: `Mínimo no cumplido (${t}/${CTRL.minVerde} ticks)` };
+  if (t >= CTRL.maxVerde) return { accion: 'cambiar',  razon: `Máximo superado (${t} >= ${CTRL.maxVerde} ticks)` };
+  if (alterna > u)        return { accion: 'cambiar',  razon: `Presión alterna ${alterna.toFixed(1)} > umbral ${u.toFixed(1)}` };
+                          return { accion: 'mantener', razon: `Presión actual ${actual.toFixed(1)} suficiente (umbral ${u.toFixed(1)})` };
+}
+
+// ── Canvas ───────────────────────────────────────────────────────────
+const cv  = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const CW = cv.width, CH = cv.height, CX = CW / 2, CY = CH / 2;
+const RH = 60, LO = 16;
+
+function drawStatic() {
+  ctx.fillStyle = '#0e0f1c';
+  ctx.fillRect(0, 0, CW, CH);
+
+  ctx.fillStyle = '#1b1c2c';
+  ctx.fillRect(0, CY - RH, CW, RH * 2);
+  ctx.fillRect(CX - RH, 0, RH * 2, CH);
+
+  ctx.strokeStyle = '#252535';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([9, 9]);
+  ctx.beginPath();
+  for (let y = 0; y < CY - RH; y += 18) { ctx.moveTo(CX, y); ctx.lineTo(CX, y + 9); }
+  for (let y = CY + RH; y < CH;  y += 18) { ctx.moveTo(CX, y); ctx.lineTo(CX, y + 9); }
+  for (let x = 0; x < CX - RH; x += 18) { ctx.moveTo(x, CY); ctx.lineTo(x + 9, CY); }
+  for (let x = CX + RH; x < CW; x += 18) { ctx.moveTo(x, CY); ctx.lineTo(x + 9, CY); }
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.fillStyle = '#263252';
+  for (let i = -3; i <= 3; i++) {
+    const bx = CX - RH + i * 15;
+    ctx.fillRect(bx, CY - RH - 13, 9, 9);
+    ctx.fillRect(bx, CY + RH + 4,  9, 9);
+    const by = CY - RH + i * 15;
+    ctx.fillRect(CX - RH - 13, by, 9, 9);
+    ctx.fillRect(CX + RH + 4,  by, 9, 9);
+  }
+}
+
+function arrowHead(x, y, dx, dy) {
+  const len = Math.hypot(dx, dy) || 1;
+  const nx = dx / len, ny = dy / len, px = -ny, py = nx;
+  ctx.beginPath();
+  ctx.moveTo(x + dx + nx * 5, y + dy + ny * 5);
+  ctx.lineTo(x + dx + px * 2.5, y + dy + py * 2.5);
+  ctx.lineTo(x + dx - px * 2.5, y + dy - py * 2.5);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawLight(x, y, orient, isVerde) {
+  const cols = isVerde ? ['#2a2a2a', '#2a2a2a', 'lime'] : ['#cc2222', '#2a2a2a', '#2a2a2a'];
+  ctx.fillStyle = '#1e1e1e';
+  ctx.strokeStyle = '#4a5060';
+  ctx.lineWidth = 1;
+  if (orient === 'v') {
+    ctx.fillRect(x, y, 20, 50); ctx.strokeRect(x, y, 20, 50);
+    cols.forEach((c, i) => {
+      ctx.fillStyle = c;
+      ctx.beginPath(); ctx.arc(x + 10, y + 10 + i * 16, 6, 0, Math.PI * 2); ctx.fill();
+    });
+  } else {
+    ctx.fillRect(x, y, 50, 20); ctx.strokeRect(x, y, 50, 20);
+    cols.forEach((c, i) => {
+      ctx.fillStyle = c;
+      ctx.beginPath(); ctx.arc(x + 10 + i * 16, y + 10, 6, 0, Math.PI * 2); ctx.fill();
+    });
+  }
+}
+
+function draw(estado, dec) {
+  drawStatic();
+
+  const fase = estado.fase;
+  drawLight(CX + RH + 4,  CY + RH + 4,  'v', fase === 'vertical');
+  drawLight(CX - RH - 56, CY - RH - 26, 'h', fase === 'horizontal');
+
+  // Autos Norte
+  for (let i = 0; i < estado.autosNorte; i++) {
+    const x = CX - LO, y = CY + RH + 14 + i * 20;
+    ctx.fillStyle = '#b07ab8';
+    ctx.fillRect(x - 8, y - 11, 16, 22);
+    ctx.fillStyle = 'white';
+    ctx.beginPath(); ctx.moveTo(x, y - 9); ctx.lineTo(x - 5, y + 6); ctx.lineTo(x + 5, y + 6);
+    ctx.closePath(); ctx.fill();
+  }
+
+  // Autos Este
+  for (let i = 0; i < estado.autosEste; i++) {
+    const x = CX - RH - 14 - i * 20, y = CY + LO;
+    ctx.fillStyle = '#b07ab8';
+    ctx.fillRect(x - 11, y - 8, 22, 16);
+    ctx.fillStyle = 'white';
+    ctx.beginPath(); ctx.moveTo(x + 9, y); ctx.lineTo(x - 6, y - 5); ctx.lineTo(x - 6, y + 5);
+    ctx.closePath(); ctx.fill();
+  }
+
+  // Peatones
+  const puede = { top: fase === 'horizontal', bottom: fase === 'horizontal',
+                  left: fase === 'vertical',  right:  fase === 'vertical' };
+  const cfg = {
+    top:    { axis: 'x', ax: CX,       ay: CY - RH - 9, adx:  0, ady:  7 },
+    bottom: { axis: 'x', ax: CX,       ay: CY + RH + 9, adx:  0, ady: -7 },
+    left:   { axis: 'y', ax: CX-RH-9,  ay: CY,          adx:  7, ady:  0 },
+    right:  { axis: 'y', ax: CX+RH+9,  ay: CY,          adx: -7, ady:  0 },
+  };
+  const spread = RH - 8;
+
+  for (const [cruce, c] of Object.entries(cfg)) {
+    const n = estado.peatones[cruce];
+    if (!n) continue;
+    ctx.fillStyle = puede[cruce] ? '#7ec87e' : '#d06868';
+    for (let j = 0; j < n; j++) {
+      const t  = n > 1 ? (j / (n - 1)) * 2 - 1 : 0;
+      const px = c.ax + (c.axis === 'x' ? t * spread : 0);
+      const py = c.ay + (c.axis === 'y' ? t * spread : 0);
+      ctx.beginPath(); ctx.arc(px, py, 5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = 'white';
+      arrowHead(px, py, c.adx, c.ady);
+      ctx.fillStyle = puede[cruce] ? '#7ec87e' : '#d06868';
+    }
+  }
+
+  // Banner
+  const col = dec.accion === 'mantener' ? '#7ec87e' : '#d06868';
+  ctx.fillStyle = 'rgba(10,11,22,0.88)';
+  ctx.fillRect(0, 0, CW, 24);
+  ctx.fillStyle = col;
+  ctx.font = 'bold 13px "Courier New"';
+  ctx.textAlign = 'center';
+  ctx.fillText(dec.accion.toUpperCase(), CX, 16);
+  ctx.textAlign = 'left';
+}
+
+// ── Lectura y actualización ──────────────────────────────────────────
+function getEstado() {
+  const n = id => parseInt(document.getElementById(id).value) || 0;
+  return {
+    autosNorte: n('autos_norte'),
+    autosEste:  n('autos_este'),
+    peatones: { top: n('ped_top'), bottom: n('ped_bottom'), left: n('ped_left'), right: n('ped_right') },
+    fase:  document.querySelector('input[name="fase"]:checked').value,
+    ticks: n('ticks'),
+  };
+}
+
+function update() {
+  const estado = getEstado();
+  const dec    = decidir(estado);
+  draw(estado, dec);
+  const el = document.getElementById('dec-accion');
+  el.textContent = dec.accion.toUpperCase();
+  el.style.color = dec.accion === 'mantener' ? '#7ec87e' : '#d06868';
+  document.getElementById('dec-razon').textContent = dec.razon;
+}
+
+document.querySelectorAll('input').forEach(el => el.addEventListener('input', update));
+update();
+</script>
+</body>
+</html>
